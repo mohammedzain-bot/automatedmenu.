@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { ChefHat, Eye, EyeOff, Lock, Mail, ArrowLeft } from 'lucide-react'
+import { ChefHat, Eye, EyeOff, Lock, Mail, ArrowLeft, KeyRound, Sparkles } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 
@@ -9,7 +9,7 @@ export default function AdminLogin() {
   const [password, setPassword] = useState('admin123')
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
-  const { signIn, isDemo } = useAuth()
+  const { signIn } = useAuth()
   const navigate = useNavigate()
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -19,10 +19,22 @@ export default function AdminLogin() {
 
     const { error } = await signIn(email, password)
     if (error) {
-      toast.error('Invalid credentials. Please try again.')
+      toast.error(error || 'Invalid credentials. Please try again.')
       setLoading(false)
     } else {
       toast.success('Welcome back, Admin!')
+      navigate('/admin', { replace: true })
+    }
+  }
+
+  const handleQuickLogin = async () => {
+    setLoading(true)
+    const { error } = await signIn('admin@hotel.com', 'admin123')
+    if (error) {
+      toast.error(error)
+      setLoading(false)
+    } else {
+      toast.success('Signed in as Admin!')
       navigate('/admin', { replace: true })
     }
   }
@@ -45,9 +57,23 @@ export default function AdminLogin() {
             <div className="w-14 h-14 bg-gradient-to-tr from-amber-600 to-amber-400 rounded-2xl flex items-center justify-center shadow-md mb-3 text-white">
               <ChefHat size={28} />
             </div>
-            <h1 className="text-xl font-extrabold text-slate-900">Hotel Staff Login</h1>
+            <h1 className="text-xl font-extrabold text-slate-900">Hotel Admin Portal</h1>
             <p className="text-xs text-slate-500 mt-1">
-              Access kitchen orders and food menu controls
+              Manage incoming table orders and food menu
+            </p>
+          </div>
+
+          {/* Quick Access Credentials Banner */}
+          <div className="bg-amber-50/90 border border-amber-200/80 rounded-xl p-3 mb-5 text-left text-xs">
+            <div className="flex items-center gap-1.5 font-bold text-amber-900 mb-1">
+              <KeyRound size={13} className="text-amber-700" />
+              <span>Default Admin Credentials</span>
+            </div>
+            <p className="text-amber-800 text-[11px] font-mono">
+              Email: <strong className="text-slate-900">admin@hotel.com</strong>
+            </p>
+            <p className="text-amber-800 text-[11px] font-mono">
+              Password: <strong className="text-slate-900">admin123</strong>
             </p>
           </div>
 
@@ -104,23 +130,18 @@ export default function AdminLogin() {
             </button>
           </form>
 
-          {isDemo && (
-            <div className="mt-4 pt-4 border-t border-slate-100 text-center">
-              <span className="text-[11px] text-slate-400 block mb-2">
-                Quick Access (Click to enter instantly)
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  signIn('admin@hotel.com', 'admin123')
-                  navigate('/admin', { replace: true })
-                }}
-                className="w-full py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold rounded-lg transition-colors border border-amber-200"
-              >
-                ⚡ Instant Staff Demo Access
-              </button>
-            </div>
-          )}
+          {/* Instant 1-Click Login Button */}
+          <div className="mt-4 pt-4 border-t border-slate-100 text-center">
+            <button
+              type="button"
+              onClick={handleQuickLogin}
+              disabled={loading}
+              className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-extrabold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-95"
+            >
+              <Sparkles size={14} />
+              <span>1-Click Staff Access</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
