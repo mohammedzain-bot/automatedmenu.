@@ -3,6 +3,7 @@ import { DEMO_ITEMS } from './demoData'
 
 const MENU_STORAGE_KEY = 'hotel_menu_items'
 const ORDERS_STORAGE_KEY = 'hotel_menu_orders'
+const ACTIVE_ORDER_STORAGE_KEY = 'hotel_active_customer_order'
 
 // Initial seed orders for a realistic admin experience
 const INITIAL_ORDERS: Order[] = [
@@ -112,10 +113,35 @@ export function addLocalOrder(newOrder: Order): void {
   saveLocalOrders(updated)
 }
 
+export function updateLocalOrder(orderId: string, updatedOrder: Order): void {
+  const current = getLocalOrders()
+  const updated = current.map(o => (o.id === orderId ? updatedOrder : o))
+  saveLocalOrders(updated)
+}
+
 export function updateLocalOrderStatus(orderId: string, status: OrderStatus): void {
   const current = getLocalOrders()
   const updated = current.map(o =>
     o.id === orderId ? { ...o, status, updated_at: new Date().toISOString() } : o
   )
   saveLocalOrders(updated)
+}
+
+export function getActiveCustomerOrder(): Order | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_ORDER_STORAGE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw) as Order
+  } catch {
+    return null
+  }
+}
+
+export function saveActiveCustomerOrder(order: Order | null): void {
+  if (!order) {
+    localStorage.removeItem(ACTIVE_ORDER_STORAGE_KEY)
+  } else {
+    localStorage.setItem(ACTIVE_ORDER_STORAGE_KEY, JSON.stringify(order))
+  }
+  window.dispatchEvent(new CustomEvent('hotel_active_order_changed', { detail: order }))
 }

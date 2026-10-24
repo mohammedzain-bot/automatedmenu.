@@ -210,6 +210,12 @@ function OrderCard({
                 <MapPin size={12} />
                 {order.table_number}
               </span>
+              {order.updated_at &&
+                new Date(order.updated_at).getTime() - new Date(order.created_at).getTime() > 2000 && (
+                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                    ✏️ Modified by Guest
+                  </span>
+                )}
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
               <span className="flex items-center gap-1">

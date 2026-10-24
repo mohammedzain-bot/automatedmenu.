@@ -1,5 +1,4 @@
-import { useState, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useMemo, useEffect } from 'react'
 import {
   ShoppingCart,
   Plus,
@@ -9,12 +8,18 @@ import {
   Utensils,
   ShieldCheck,
   Sparkles,
+  Clock,
+  Receipt,
+  Edit3,
 } from 'lucide-react'
 import { useMenuItems } from '../hooks/useMenuItems'
 import { useCart } from '../contexts/CartContext'
+import { getActiveCustomerOrder, saveActiveCustomerOrder } from '../lib/storage'
 import CartDrawer from '../components/CartDrawer'
 import CheckoutModal from '../components/CheckoutModal'
-import type { FoodItem } from '../types'
+import type { FoodItem, Order } from '../types'
+
+const EDIT_WINDOW_SECONDS = 120
 
 export default function CustomerPage() {
   const { items, loading, error } = useMenuItems()
@@ -23,6 +28,39 @@ export default function CustomerPage() {
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [activeCategory, setActiveCategory] = useState<string>('All')
   const [search, setSearch] = useState('')
+
+  // Active customer order state (for 2-minute editing & status tracking)
+  const [activeOrder, setActiveOrder] = useState<Order | null>(() => getActiveCustomerOrder())
+  const [activeOrderTimeLeft, setActiveOrderTimeLeft] = useState<number>(0)
+
+  // Listen to active order changes across tabs/windows
+  useEffect(() => {
+    const handleActiveOrderChanged = (e: Event) => {
+      const customEvent = e as CustomEvent<Order | null>
+      setActiveOrder(customEvent.detail ?? getActiveCustomerOrder())
+    }
+    window.addEventListener('hotel_active_order_changed', handleActiveOrderChanged)
+    return () => window.removeEventListener('hotel_active_order_changed', handleActiveOrderChanged)
+  }, [])
+
+  // Timer for active order banner
+  useEffect(() => {
+    if (!activeOrder) {
+      setActiveOrderTimeLeft(0)
+      return
+    }
+
+    const calcTime = () => {
+      const created = new Date(activeOrder.created_at).getTime()
+      const elapsed = Math.floor((Date.now() - created) / 1000)
+      const left = Math.max(0, EDIT_WINDOW_SECONDS - elapsed)
+      setActiveOrderTimeLeft(left)
+    }
+
+    calcTime()
+    const interval = setInterval(calcTime, 1000)
+    return () => clearInterval(interval)
+  }, [activeOrder])
 
   const categories = useMemo(() => {
     const cats = Array.from(new Set(items.map(i => i.category).filter(Boolean))) as string[]
@@ -42,22 +80,26 @@ export default function CustomerPage() {
     return list
   }, [items, activeCategory, search])
 
+  const formatTimer = (seconds: number) => {
+    const m = Math.floor(seconds / 60)
+    const s = seconds % 60
+    return `${m}:${s < 10 ? '0' : ''}${s}`
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
-      {/* Top Announcement Bar */}
+      {/* Top Welcome Bar (No admin links) */}
       <div className="bg-slate-900 text-slate-200 text-xs py-2 px-4 border-b border-slate-800">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-medium tracking-wide">Live Hotel Kitchen • Fresh Dine-in Ordering</span>
+            <span className="font-medium tracking-wide">
+              Live Hotel Kitchen • Fresh Dine-in Ordering
+            </span>
           </div>
-          <Link
-            to="/admin"
-            className="text-amber-400 hover:text-amber-300 font-semibold transition-colors flex items-center gap-1 text-xs"
-          >
-            <span>Admin Portal</span>
-            <span aria-hidden="true">&rarr;</span>
-          </Link>
+          <span className="text-[11px] text-slate-400 font-medium">
+            Fast Table Service
+          </span>
         </div>
       </div>
 
@@ -78,7 +120,7 @@ export default function CustomerPage() {
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-normal">
-                Order directly from your table • Fast service
+                Order directly from your table • Fast kitchen service
               </p>
             </div>
           </div>
@@ -210,8 +252,50 @@ export default function CustomerPage() {
         )}
       </main>
 
-      {/* Floating Bottom Cart Bar for Mobile */}
-      {totalItems > 0 && (
+      {/* Persistent Active Order Banner (with 2-minute live edit button) */}
+      {activeOrder && (
+        <div className="sticky bottom-4 z-30 px-4 max-w-lg mx-auto w-full transition-all">
+          <div className="bg-slate-900 text-white rounded-2xl p-3.5 shadow-2xl flex items-center justify-between border border-slate-800 backdrop-blur-md">
+            <div className="min-w-0 pr-2">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                <span className="font-bold text-xs text-white truncate">
+                  Active Order {activeOrder.order_number}
+                </span>
+                <span className="bg-slate-800 text-amber-400 text-[10px] px-2 py-0.5 rounded font-bold">
+                  {activeOrder.table_number}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">
+                {activeOrderTimeLeft > 0 ? (
+                  <>
+                    <Clock size={12} className="text-amber-400" />
+                    <span className="text-amber-300 font-semibold">
+                      {formatTimer(activeOrderTimeLeft)} remaining to edit
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Check size={12} className="text-emerald-400" />
+                    <span>Kitchen is preparing your order</span>
+                  </>
+                )}
+              </p>
+            </div>
+
+            <button
+              onClick={() => setCheckoutOpen(true)}
+              className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 shadow-sm shrink-0"
+            >
+              {activeOrderTimeLeft > 0 ? <Edit3 size={13} /> : <Receipt size={13} />}
+              <span>{activeOrderTimeLeft > 0 ? 'Edit Order' : 'Receipt'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Bottom Cart Bar for when items are in cart */}
+      {!activeOrder && totalItems > 0 && (
         <div className="sticky bottom-4 z-30 px-4 max-w-md mx-auto w-full transition-all">
           <div className="bg-slate-900 text-white rounded-2xl p-3.5 shadow-2xl flex items-center justify-between border border-slate-800 backdrop-blur-md">
             <div>
@@ -239,26 +323,30 @@ export default function CustomerPage() {
         </div>
       )}
 
-      {/* Minimal Footer */}
+      {/* Minimal Footer (Completely removed any admin link) */}
       <footer className="mt-auto border-t border-slate-200/80 bg-white py-6 px-4 text-center text-xs text-slate-500 space-y-2">
-        <div className="flex items-center justify-center gap-4 text-xs font-semibold text-slate-600">
-          <Link to="/" className="hover:text-amber-600 transition-colors">
-            Customer Menu
-          </Link>
-          <span>•</span>
-          <Link to="/admin" className="hover:text-amber-600 transition-colors">
-            Admin Orders & Menu
-          </Link>
-        </div>
+        <p className="flex items-center justify-center gap-1.5 text-xs text-slate-600 font-semibold">
+          <Utensils size={14} className="text-amber-500" />
+          <span>Royal Palm Hotel Dining & Room Service</span>
+        </p>
         <p className="flex items-center justify-center gap-1 text-[11px] text-slate-400">
           <ShieldCheck size={13} className="text-emerald-500" />
-          <span>Fast, Minimal Hotel Food Ordering System</span>
+          <span>Freshly Prepared • Direct Kitchen Service</span>
         </p>
       </footer>
 
-      {/* Slide-in Cart & Checkout Modals */}
+      {/* Slide-in Cart & Checkout/Receipt/Edit Modal */}
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
-      <CheckoutModal open={checkoutOpen} onClose={() => setCheckoutOpen(false)} />
+      <CheckoutModal
+        open={checkoutOpen}
+        onClose={() => setCheckoutOpen(false)}
+        activeOrder={activeOrder}
+        onOrderUpdated={order => {
+          setActiveOrder(order)
+          saveActiveCustomerOrder(order)
+        }}
+        menuItems={items}
+      />
     </div>
   )
 }
@@ -284,8 +372,10 @@ function FoodItemRow({
         {/* Top meta: Category chip */}
         <div className="flex items-center justify-between gap-2 mb-1.5">
           <div className="flex items-center gap-1.5">
-            {/* Visual Veg/Cuisine Indicator */}
-            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="Fresh Hotel Kitchen Dish" />
+            <span
+              className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"
+              title="Fresh Hotel Kitchen Dish"
+            />
             {item.category && (
               <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                 {item.category}
