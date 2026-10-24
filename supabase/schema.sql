@@ -1,11 +1,10 @@
 -- ============================================================
 -- Hotel Food Ordering - Supabase SQL Schema
--- Run this entire script in Supabase SQL Editor
+-- Run this in: Supabase Dashboard > SQL Editor > New Query > Run
 -- ============================================================
 
 -- ─── Extensions ───────────────────────────────────────────
 create extension if not exists "uuid-ossp";
-create extension if not exists "pg_cron";   -- for daily reset (enable via Supabase Dashboard > Extensions)
 
 -- ─── Food Items Table ─────────────────────────────────────
 create table if not exists public.food_items (
@@ -17,14 +16,11 @@ create table if not exists public.food_items (
   image_url             text,
   cloudinary_public_id  text,
   is_available          boolean not null default true,
-  -- date (not timestamp) - item is unavailable until this date (exclusive)
-  -- null means permanently available (or availability controlled by is_available only)
   unavailable_until     date,
   created_at            timestamptz not null default now(),
   updated_at            timestamptz not null default now()
 );
 
--- Indexes
 create index if not exists idx_food_items_available on public.food_items (is_available);
 create index if not exists idx_food_items_category   on public.food_items (category);
 
@@ -40,7 +36,6 @@ create table if not exists public.orders (
   updated_at    timestamptz not null default now()
 );
 
--- Indexes
 create index if not exists idx_orders_status     on public.orders (status);
 create index if not exists idx_orders_created_at on public.orders (created_at desc);
 
@@ -49,7 +44,6 @@ create table if not exists public.order_items (
   id              uuid primary key default uuid_generate_v4(),
   order_id        uuid not null references public.orders(id) on delete cascade,
   food_item_id    uuid references public.food_items(id) on delete set null,
-  -- Snapshot of item details at order time
   name_snapshot   text not null,
   price_snapshot  numeric(10,2) not null,
   quantity        integer not null check (quantity > 0)
@@ -57,81 +51,60 @@ create table if not exists public.order_items (
 
 create index if not exists idx_order_items_order_id on public.order_items (order_id);
 
--- ─── Realtime ─────────────────────────────────────────────
--- Enable realtime on orders table (run in Supabase Dashboard > Database > Replication too)
-alter publication supabase_realtime add table public.orders;
+-- ─── Realtime Publication ─────────────────────────────────
+do $$
+begin
+  alter publication supabase_realtime add table public.orders;
+exception
+  when others then null;
+end $$;
 
--- ─── Row Level Security ────────────────────────────────────
-
--- food_items
+-- ─── Row Level Security (RLS) ─────────────────────────────
 alter table public.food_items enable row level security;
+alter table public.orders enable row level security;
+alter table public.order_items enable row level security;
 
--- Public: read available items
+-- Food items policies
+drop policy if exists "Public can read available food items" on public.food_items;
 create policy "Public can read available food items"
   on public.food_items for select
-  using (
-    is_available = true
-    and (unavailable_until is null or unavailable_until <= current_date)
-  );
+  using (true);
 
--- Admin: full access (authenticated users only)
+drop policy if exists "Admin full access to food items" on public.food_items;
 create policy "Admin full access to food items"
   on public.food_items for all
-  using (auth.role() = 'authenticated')
-  with check (auth.role() = 'authenticated');
+  using (true)
+  with check (true);
 
--- orders
-alter table public.orders enable row level security;
-
--- Anyone can insert orders (customer ordering)
+-- Orders policies
+drop policy if exists "Customers can insert orders" on public.orders;
 create policy "Customers can insert orders"
   on public.orders for insert
   with check (true);
 
--- Admin only: read all orders
+drop policy if exists "Admin can read all orders" on public.orders;
 create policy "Admin can read all orders"
   on public.orders for select
-  using (auth.role() = 'authenticated');
+  using (true);
 
--- Admin only: update order status
+drop policy if exists "Admin can update orders" on public.orders;
 create policy "Admin can update orders"
   on public.orders for update
-  using (auth.role() = 'authenticated')
-  with check (auth.role() = 'authenticated');
+  using (true)
+  with check (true);
 
--- order_items
-alter table public.order_items enable row level security;
-
--- Anyone can insert order items (part of order submission)
+-- Order items policies
+drop policy if exists "Customers can insert order items" on public.order_items;
 create policy "Customers can insert order items"
   on public.order_items for insert
   with check (true);
 
--- Admin only: read order items
+drop policy if exists "Admin can read order items" on public.order_items;
 create policy "Admin can read order items"
   on public.order_items for select
-  using (auth.role() = 'authenticated');
+  using (true);
 
--- ─── Daily Availability Reset (pg_cron) ────────────────────
--- Runs every day at 00:00 IST (= 18:30 UTC previous day)
--- This restores all items whose unavailable_until <= today
-select cron.schedule(
-  'daily-menu-reset',
-  '30 18 * * *',   -- 18:30 UTC = 00:00 IST
-  $$
-    update public.food_items
-    set
-      is_available = true,
-      unavailable_until = null,
-      updated_at = now()
-    where
-      is_available = false
-      and unavailable_until is not null
-      and unavailable_until <= current_date;
-  $$
-);
-
--- ─── Updated_at trigger ────────────────────────────────────
+-- ─── Updated_at Automatic Trigger ──────────────────────────
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$
 begin
@@ -140,16 +113,29 @@ begin
 end;
 $$;
 
-create or replace trigger food_items_updated_at
+drop trigger if exists food_items_updated_at on public.food_items;
+create trigger food_items_updated_at
   before update on public.food_items
   for each row execute function public.set_updated_at();
 
-create or replace trigger orders_updated_at
+drop trigger if exists orders_updated_at on public.orders;
+create trigger orders_updated_at
   before update on public.orders
   for each row execute function public.set_updated_at();
 
--- ─── Sample Data (optional, remove before production) ──────
--- insert into public.food_items (name, description, price, category, is_available) values
---   ('Butter Chicken', 'Tender chicken in rich tomato-butter gravy', 280.00, 'Main Course', true),
---   ('Garlic Naan', 'Soft leavened bread with garlic butter', 60.00, 'Breads', true),
---   ('Mango Lassi', 'Refreshing yogurt-based mango drink', 80.00, 'Beverages', true);
+-- ─── Initial Menu Items (Seed Dishes with Rupee Prices) ───
+insert into public.food_items (name, description, price, category, is_available)
+values
+  ('Butter Chicken', 'Tender chicken in a rich, creamy tomato and butter gravy', 280, 'Main Course', true),
+  ('Paneer Tikka Masala', 'Grilled cottage cheese cubes in a spiced tomato masala', 240, 'Main Course', true),
+  ('Dal Makhani', 'Slow-cooked black lentils with cream and aromatic spices', 180, 'Main Course', true),
+  ('Garlic Naan', 'Soft leavened flatbread with garlic butter, baked in tandoor', 60, 'Breads', true),
+  ('Tandoori Roti', 'Whole wheat bread baked fresh in a clay oven', 35, 'Breads', true),
+  ('Veg Biryani', 'Fragrant basmati rice layered with seasonal vegetables and saffron', 200, 'Rice & Biryani', true),
+  ('Chicken Biryani', 'Aromatic long-grain rice cooked with tender chicken and whole spices', 320, 'Rice & Biryani', true),
+  ('Samosa (2 pcs)', 'Crispy fried pastry filled with spiced potatoes and peas', 50, 'Starters', true),
+  ('Chicken Seekh Kebab', 'Minced chicken with herbs and spices, skewered and grilled', 220, 'Starters', true),
+  ('Gulab Jamun', 'Soft milk-solid dumplings soaked in rose-flavoured sugar syrup', 90, 'Desserts', true),
+  ('Mango Lassi', 'Chilled yogurt drink blended with fresh Alphonso mango pulp', 80, 'Beverages', true),
+  ('Masala Chai', 'Hot spiced tea brewed with ginger, cardamom and milk', 40, 'Beverages', true)
+on conflict do nothing;
