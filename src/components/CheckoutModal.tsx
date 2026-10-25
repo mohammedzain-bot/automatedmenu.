@@ -13,11 +13,18 @@ import {
   Trash2,
   Lock,
   RotateCcw,
+  XCircle,
 } from 'lucide-react'
 import { useCart } from '../contexts/CartContext'
 import { supabase, IS_DEMO } from '../lib/supabase'
-import { addLocalOrder, updateLocalOrder, saveActiveCustomerOrder } from '../lib/storage'
+import {
+  addLocalOrder,
+  updateLocalOrder,
+  updateLocalOrderStatus,
+  saveActiveCustomerOrder,
+} from '../lib/storage'
 import toast from 'react-hot-toast'
+import EditTimerModal from './EditTimerModal'
 import type { Order, OrderItem, FoodItem } from '../types'
 
 const EDIT_WINDOW_SECONDS = 120 // 2 minutes
@@ -34,7 +41,7 @@ interface CheckoutModalProps {
   open: boolean
   onClose: () => void
   activeOrder?: Order | null
-  onOrderUpdated?: (order: Order) => void
+  onOrderUpdated?: (order: Order | null) => void
   menuItems?: FoodItem[]
 }
 
@@ -48,12 +55,14 @@ export default function CheckoutModal({
   const { items, totalAmount, clearCart } = useCart()
   const [tableNumber, setTableNumber] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
   const [placedOrder, setPlacedOrder] = useState<Order | null>(activeOrder ?? null)
   const [isEditing, setIsEditing] = useState(false)
   const [editableItems, setEditableItems] = useState<EditableItem[]>([])
   const [editableTable, setEditableTable] = useState('')
   const [selectedAddDishId, setSelectedAddDishId] = useState<string>('')
   const [remainingSeconds, setRemainingSeconds] = useState<number>(0)
+  const [showTimerModal, setShowTimerModal] = useState<boolean>(false)
 
   const submitRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -208,13 +217,63 @@ export default function CheckoutModal({
       saveActiveCustomerOrder(fullOrder)
       onOrderUpdated?.(fullOrder)
       clearCart()
-      toast.success('Order placed! You have 2 minutes to edit if needed.')
+      setShowTimerModal(true)
+      toast.success('Order placed! You have 2 minutes to edit or cancel.')
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to place order. Please try again.'
       toast.error(msg)
       submitRef.current = false
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  // Cancel order within 2-minute window
+  const handleCancelOrder = async () => {
+    if (!placedOrder) return
+
+    // 1. Strict 2-minute security check
+    const orderTime = new Date(placedOrder.created_at).getTime()
+    if (Date.now() - orderTime > EDIT_WINDOW_SECONDS * 1000) {
+      toast.error('The 2-minute cancellation window has passed. Order is locked.')
+      return
+    }
+
+    if (placedOrder.status !== 'new') {
+      toast.error('Kitchen has already started preparing your food.')
+      return
+    }
+
+    setIsCancelling(true)
+
+    try {
+      const now = new Date().toISOString()
+      if (IS_DEMO) {
+        updateLocalOrderStatus(placedOrder.id, 'cancelled')
+      } else {
+        const { error: cancelErr } = await supabase
+          .from('orders')
+          .update({
+            status: 'cancelled',
+            updated_at: now,
+          })
+          .eq('id', placedOrder.id)
+
+        if (cancelErr) throw cancelErr
+      }
+
+      saveActiveCustomerOrder(null)
+      onOrderUpdated?.(null)
+      setPlacedOrder(null)
+      setShowTimerModal(false)
+      setIsEditing(false)
+      toast.success(`Order ${placedOrder.order_number} has been cancelled.`)
+      onClose()
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to cancel order. Please try again.'
+      toast.error(msg)
+    } finally {
+      setIsCancelling(false)
     }
   }
 
@@ -393,45 +452,47 @@ export default function CheckoutModal({
     onClose()
   }
 
-  if (!open) return null
+  if (!open && !showTimerModal) return null
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center px-0 sm:px-4 font-sans text-slate-800">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
-        onClick={!submitting ? handleClose : undefined}
-      />
+    <>
+      {open && (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center px-0 sm:px-4 font-sans text-slate-800">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
+            onClick={!submitting ? handleClose : undefined}
+          />
 
-      {/* Modal Box */}
-      <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0 bg-gray-50/70">
-          <div>
-            <h2 className="font-extrabold text-gray-900 text-lg">
-              {isEditing
-                ? 'Edit Your Order'
-                : placedOrder
-                ? 'Order Confirmed'
-                : 'Confirm Order'}
-            </h2>
-            <p className="text-xs text-gray-500">
-              {isEditing
-                ? 'Adjust items or table number'
-                : placedOrder
-                ? 'Receipt & live status'
-                : 'Enter table number to place order'}
-            </p>
-          </div>
-          {!submitting && (
-            <button
-              onClick={handleClose}
-              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
-            >
-              <X size={18} />
-            </button>
-          )}
-        </div>
+          {/* Modal Box */}
+          <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0 bg-gray-50/70">
+              <div>
+                <h2 className="font-extrabold text-gray-900 text-lg">
+                  {isEditing
+                    ? 'Edit Your Order'
+                    : placedOrder
+                    ? 'Order Confirmed'
+                    : 'Confirm Order'}
+                </h2>
+                <p className="text-xs text-gray-500">
+                  {isEditing
+                    ? 'Adjust items or table number'
+                    : placedOrder
+                    ? 'Receipt & live status'
+                    : 'Enter table number to place order'}
+                </p>
+              </div>
+              {!submitting && (
+                <button
+                  onClick={handleClose}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              )}
+            </div>
 
         <div className="overflow-y-auto flex-1 p-6">
           {!placedOrder ? (
@@ -636,7 +697,7 @@ export default function CheckoutModal({
                 </p>
               </div>
 
-              {/* 2-Minute Edit Window Banner */}
+              {/* 2-Minute Edit & Cancel Window Banner */}
               <div
                 className={`rounded-xl p-3 border transition-all ${
                   canEdit
@@ -644,7 +705,7 @@ export default function CheckoutModal({
                     : 'bg-slate-100/90 border-slate-200 text-slate-600'
                 }`}
               >
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                   <div className="flex items-center gap-2">
                     {canEdit ? (
                       <Clock size={16} className="text-amber-600 shrink-0 animate-pulse" />
@@ -654,25 +715,35 @@ export default function CheckoutModal({
                     <div>
                       <span className="font-bold text-xs block">
                         {canEdit
-                          ? 'Need to change your order?'
-                          : 'Edit window closed (2 mins passed)'}
+                          ? 'Need to change or cancel order?'
+                          : 'Edit & cancel window closed (2 mins passed)'}
                       </span>
                       <span className="text-[11px] text-slate-500">
                         {canEdit
-                          ? `You can modify items for another ${formatTimeLeft(remainingSeconds)}`
+                          ? `You can modify items or cancel for another ${formatTimeLeft(remainingSeconds)}`
                           : 'Order locked in kitchen for preparation'}
                       </span>
                     </div>
                   </div>
 
                   {canEdit && (
-                    <button
-                      onClick={startEditing}
-                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-bold text-xs rounded-lg transition-all flex items-center gap-1 shadow-sm shrink-0"
-                    >
-                      <Edit3 size={13} />
-                      <span>Edit Order</span>
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                      <button
+                        onClick={startEditing}
+                        className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-bold text-xs rounded-lg transition-all flex items-center gap-1 shadow-sm shrink-0"
+                      >
+                        <Edit3 size={13} />
+                        <span>Edit</span>
+                      </button>
+                      <button
+                        onClick={handleCancelOrder}
+                        disabled={isCancelling}
+                        className="px-2.5 py-1.5 bg-red-100 hover:bg-red-200 active:scale-95 text-red-700 font-bold text-xs rounded-lg transition-all flex items-center gap-1 border border-red-200 shrink-0"
+                      >
+                        <XCircle size={13} />
+                        <span>Cancel</span>
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -818,5 +889,21 @@ export default function CheckoutModal({
         </div>
       </div>
     </div>
+      )}
+
+      {/* Pop-up 2-Minute Timer & Cancel Modal right after ordering */}
+      <EditTimerModal
+        open={showTimerModal}
+        order={placedOrder}
+        remainingSeconds={remainingSeconds}
+        onClose={() => setShowTimerModal(false)}
+        onEdit={() => {
+          setShowTimerModal(false)
+          startEditing()
+        }}
+        onCancel={handleCancelOrder}
+        isCancelling={isCancelling}
+      />
+    </>
   )
 }

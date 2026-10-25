@@ -271,7 +271,7 @@ export default function CustomerPage() {
                   <>
                     <Clock size={12} className="text-amber-400" />
                     <span className="text-amber-300 font-semibold">
-                      {formatTimer(activeOrderTimeLeft)} remaining to edit
+                      {formatTimer(activeOrderTimeLeft)} to edit or cancel
                     </span>
                   </>
                 ) : (
@@ -288,7 +288,7 @@ export default function CustomerPage() {
               className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 shadow-sm shrink-0"
             >
               {activeOrderTimeLeft > 0 ? <Edit3 size={13} /> : <Receipt size={13} />}
-              <span>{activeOrderTimeLeft > 0 ? 'Edit Order' : 'Receipt'}</span>
+              <span>{activeOrderTimeLeft > 0 ? 'Edit / Cancel' : 'Receipt'}</span>
             </button>
           </div>
         </div>
